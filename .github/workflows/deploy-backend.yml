@@ -56,4 +56,4 @@ jobs:
           aws-region: ap-south-1
 
       - name: Deploy with Serverless
-        run: npx serverless deploy --stage prod
+        run: npx serverless@3 deploy --stage prod

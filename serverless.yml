@@ -1,3 +1,4 @@
+frameworkVersion: '3'
 service: tripbh-backend
 
 provider:
@@ -13,7 +14,7 @@ provider:
     DATABASE_URL: postgresql://tripbh_admin:5yWsRSi3oMTEOhnh9rvo@tripbh-db.c3o6mgi6ouz2.ap-south-1.rds.amazonaws.com:5432/tripbh?schema=public
     JWT_SECRET: ${env:JWT_SECRET, 'tripbh-prod-jwt-secret-change-this'}
     JWT_EXPIRES_IN: 7d
-    FRONTEND_URL: ${env:FRONTEND_URL, '*'}
+    FRONTEND_URL: https://main.dt1pxzn8p4upq.amplifyapp.com
 
 functions:
   api:
