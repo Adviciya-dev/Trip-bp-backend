@@ -1,0 +1,464 @@
+generator client {
+  provider      = "prisma-client-js"
+  binaryTargets = ["native", "rhel-openssl-3.0.x"]
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─── ENUMS ──────────────────────────────────────────────
+
+enum UserRole {
+  ADMIN
+  DISPATCHER
+  DRIVER
+  SUB_AGENCY_USER
+}
+
+enum TripStatus {
+  DRAFT
+  CONFIRMED
+  READY_FOR_ASSIGNMENT
+  ASSIGNED_INTERNAL
+  ASSIGNED_SUB_AGENCY
+  ENROUTE
+  PICKED_UP
+  COMPLETED
+  CANCELLED
+  NO_SHOW
+}
+
+enum ServiceType {
+  AIRPORT_TRANSFER
+  ONE_DAY
+  MULTI_DAY
+}
+
+enum AssignmentType {
+  INTERNAL
+  SUB_AGENCY
+}
+
+enum ExpenseCategory {
+  FUEL
+  TOLL
+  PARKING
+  FOOD
+  OTHER
+}
+
+enum ExpenseStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum CommissionType {
+  PERCENTAGE
+  FIXED
+}
+
+enum CommissionBase {
+  FINAL_FARE
+  NET_FARE
+}
+
+enum CommissionStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum TripSource {
+  MANUAL
+  WHATSAPP_INTAKE
+}
+
+// ─── CORE MODELS ────────────────────────────────────────
+
+model Organization {
+  id        String   @id @default(uuid())
+  name      String
+  logo      String?
+  email     String?
+  phone     String?
+  address   String?
+  timezone  String   @default("Asia/Kolkata")
+  currency  String   @default("INR")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  users            User[]
+  drivers          Driver[]
+  vehicles         Vehicle[]
+  subAgencies      SubAgency[]
+  trips            Trip[]
+  pricingRules     PricingRule[]
+  commissionRules  CommissionRule[]
+  whatsappTemplates WhatsAppTemplate[]
+  serviceTypes     OrgServiceType[]
+
+  @@map("organizations")
+}
+
+model User {
+  id           String   @id @default(uuid())
+  orgId        String   @map("org_id")
+  email        String?
+  phone        String?
+  name         String
+  passwordHash String?  @map("password_hash")
+  role         UserRole
+  isActive     Boolean  @default(true) @map("is_active")
+  lastLoginAt  DateTime? @map("last_login_at")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  org          Organization @relation(fields: [orgId], references: [id])
+  driver       Driver?      @relation("UserDriver")
+  subAgency    SubAgency?   @relation("UserSubAgency", fields: [subAgencyId], references: [id])
+  subAgencyId  String?      @map("sub_agency_id")
+
+  tripStatusLogs TripStatusLog[]
+  chatMessages   TripChat[]
+
+  @@unique([orgId, email])
+  @@unique([orgId, phone])
+  @@index([orgId])
+  @@index([role])
+  @@map("users")
+}
+
+model Driver {
+  id             String    @id @default(uuid())
+  orgId          String    @map("org_id")
+  userId         String    @unique @map("user_id")
+  name           String
+  phone          String
+  email          String?
+  licenseNumber  String?   @map("license_number")
+  licenseExpiry  DateTime? @map("license_expiry")
+  isActive       Boolean   @default(true) @map("is_active")
+  deletedAt      DateTime? @map("deleted_at")
+  createdAt      DateTime  @default(now()) @map("created_at")
+  updatedAt      DateTime  @updatedAt @map("updated_at")
+
+  org            Organization    @relation(fields: [orgId], references: [id])
+  user           User            @relation("UserDriver", fields: [userId], references: [id])
+  vehicle        Vehicle?        @relation("DriverVehicle")
+  assignments    TripAssignment[]
+  expenses       TripExpense[]
+
+  @@index([orgId])
+  @@index([isActive])
+  @@map("drivers")
+}
+
+model Vehicle {
+  id          String   @id @default(uuid())
+  orgId       String   @map("org_id")
+  plateNumber String   @map("plate_number")
+  vehicleType String   @map("vehicle_type")
+  seats       Int      @default(4)
+  driverId    String?  @unique @map("driver_id")
+  isActive    Boolean  @default(true) @map("is_active")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  org         Organization @relation(fields: [orgId], references: [id])
+  driver      Driver?      @relation("DriverVehicle", fields: [driverId], references: [id])
+
+  @@index([orgId])
+  @@map("vehicles")
+}
+
+model SubAgency {
+  id              String   @id @default(uuid())
+  orgId           String   @map("org_id")
+  name            String
+  contactPerson   String?  @map("contact_person")
+  phone           String?
+  email           String?
+  address         String?
+  servicesAllowed ServiceType[] @default([])
+  settlementCycle String   @default("MONTHLY") @map("settlement_cycle")
+  isActive        Boolean  @default(true) @map("is_active")
+  deletedAt       DateTime? @map("deleted_at")
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  org              Organization     @relation(fields: [orgId], references: [id])
+  users            User[]           @relation("UserSubAgency")
+  assignments      TripAssignment[]
+  commissionRules  CommissionRule[]
+  commissionLedger CommissionLedger[]
+
+  @@index([orgId])
+  @@index([isActive])
+  @@map("sub_agencies")
+}
+
+// ─── TRIP MODELS ────────────────────────────────────────
+
+model Trip {
+  id              String      @id @default(uuid())
+  orgId           String      @map("org_id")
+  tripNumber      String      @unique @map("trip_number")
+  status          TripStatus  @default(DRAFT)
+  serviceType     ServiceType @map("service_type")
+  source          TripSource  @default(MANUAL)
+
+  // Customer
+  customerName    String      @map("customer_name")
+  customerPhone   String?     @map("customer_phone")
+  customerEmail   String?     @map("customer_email")
+
+  // Route
+  pickupAddress   String      @map("pickup_address")
+  pickupLat       Float?      @map("pickup_lat")
+  pickupLng       Float?      @map("pickup_lng")
+  dropAddress     String      @map("drop_address")
+  dropLat         Float?      @map("drop_lat")
+  dropLng         Float?      @map("drop_lng")
+
+  // Schedule
+  scheduledAt     DateTime    @map("scheduled_at")
+  scheduledEndAt  DateTime?   @map("scheduled_end_at")
+
+  // Passengers
+  paxCount        Int         @default(1) @map("pax_count")
+  luggageCount    Int         @default(0) @map("luggage_count")
+  notes           String?
+
+  // Tracking
+  trackingToken   String?     @unique @map("tracking_token")
+
+  // Soft delete
+  deletedAt       DateTime?   @map("deleted_at")
+  createdAt       DateTime    @default(now()) @map("created_at")
+  updatedAt       DateTime    @updatedAt @map("updated_at")
+
+  org             Organization    @relation(fields: [orgId], references: [id])
+  statusLogs      TripStatusLog[]
+  assignment      TripAssignment?
+  pricing         TripPricing?
+  expenses        TripExpense[]
+  chatMessages    TripChat[]
+  commission      CommissionLedger?
+
+  @@index([orgId])
+  @@index([status])
+  @@index([scheduledAt])
+  @@index([orgId, status])
+  @@index([orgId, scheduledAt])
+  @@map("trips")
+}
+
+model TripStatusLog {
+  id         String     @id @default(uuid())
+  tripId     String     @map("trip_id")
+  fromStatus TripStatus? @map("from_status")
+  toStatus   TripStatus @map("to_status")
+  actorId    String     @map("actor_id")
+  actorRole  UserRole   @map("actor_role")
+  notes      String?
+  createdAt  DateTime   @default(now()) @map("created_at")
+
+  trip       Trip @relation(fields: [tripId], references: [id])
+  actor      User @relation(fields: [actorId], references: [id])
+
+  @@index([tripId])
+  @@index([createdAt])
+  @@map("trip_status_logs")
+}
+
+model TripAssignment {
+  id             String         @id @default(uuid())
+  tripId         String         @unique @map("trip_id")
+  assignmentType AssignmentType @map("assignment_type")
+  driverId       String?        @map("driver_id")
+  subAgencyId    String?        @map("sub_agency_id")
+  isAccepted     Boolean?       @map("is_accepted")
+  declineReason  String?        @map("decline_reason")
+  assignedAt     DateTime       @default(now()) @map("assigned_at")
+  respondedAt    DateTime?      @map("responded_at")
+  createdAt      DateTime       @default(now()) @map("created_at")
+  updatedAt      DateTime       @updatedAt @map("updated_at")
+
+  trip           Trip       @relation(fields: [tripId], references: [id])
+  driver         Driver?    @relation(fields: [driverId], references: [id])
+  subAgency      SubAgency? @relation(fields: [subAgencyId], references: [id])
+
+  @@index([driverId])
+  @@index([subAgencyId])
+  @@map("trip_assignments")
+}
+
+model TripPricing {
+  id              String  @id @default(uuid())
+  tripId          String  @unique @map("trip_id")
+  distanceKm      Float?  @map("distance_km")
+  estimatedFare   Float?  @map("estimated_fare")
+  finalFare       Float?  @map("final_fare")
+  pricingRuleId   String? @map("pricing_rule_id")
+  overrideReason  String? @map("override_reason")
+  isLocked        Boolean @default(false) @map("is_locked")
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  trip            Trip         @relation(fields: [tripId], references: [id])
+  pricingRule     PricingRule? @relation(fields: [pricingRuleId], references: [id])
+
+  @@map("trip_pricings")
+}
+
+model TripExpense {
+  id           String          @id @default(uuid())
+  tripId       String          @map("trip_id")
+  driverId     String          @map("driver_id")
+  amount       Float
+  category     ExpenseCategory
+  notes        String?
+  status       ExpenseStatus   @default(PENDING)
+  rejectReason String?         @map("reject_reason")
+  createdAt    DateTime        @default(now()) @map("created_at")
+  updatedAt    DateTime        @updatedAt @map("updated_at")
+
+  trip         Trip   @relation(fields: [tripId], references: [id])
+  driver       Driver @relation(fields: [driverId], references: [id])
+
+  @@index([tripId])
+  @@index([driverId])
+  @@index([status])
+  @@map("trip_expenses")
+}
+
+model TripChat {
+  id        String   @id @default(uuid())
+  tripId    String   @map("trip_id")
+  senderId  String   @map("sender_id")
+  message   String
+  isSystem  Boolean  @default(false) @map("is_system")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  trip      Trip @relation(fields: [tripId], references: [id])
+  sender    User @relation(fields: [senderId], references: [id])
+
+  @@index([tripId])
+  @@index([tripId, createdAt])
+  @@map("trip_chats")
+}
+
+// ─── PRICING & COMMISSION ───────────────────────────────
+
+model PricingRule {
+  id            String      @id @default(uuid())
+  orgId         String      @map("org_id")
+  serviceType   ServiceType @map("service_type")
+  ratePerKm     Float       @map("rate_per_km")
+  minFare       Float       @map("min_fare")
+  includedKm    Float       @default(0) @map("included_km")
+  extraKmRate   Float       @default(0) @map("extra_km_rate")
+  effectiveFrom DateTime    @map("effective_from")
+  isActive      Boolean     @default(true) @map("is_active")
+  createdAt     DateTime    @default(now()) @map("created_at")
+  updatedAt     DateTime    @updatedAt @map("updated_at")
+
+  org           Organization  @relation(fields: [orgId], references: [id])
+  tripPricings  TripPricing[]
+
+  @@index([orgId, serviceType])
+  @@index([effectiveFrom])
+  @@map("pricing_rules")
+}
+
+model CommissionRule {
+  id             String         @id @default(uuid())
+  orgId          String         @map("org_id")
+  subAgencyId    String         @map("sub_agency_id")
+  commissionType CommissionType @map("commission_type")
+  value          Float
+  commissionBase CommissionBase @map("commission_base")
+  serviceType    ServiceType?   @map("service_type")
+  isActive       Boolean        @default(true) @map("is_active")
+  createdAt      DateTime       @default(now()) @map("created_at")
+  updatedAt      DateTime       @updatedAt @map("updated_at")
+
+  org            Organization @relation(fields: [orgId], references: [id])
+  subAgency      SubAgency    @relation(fields: [subAgencyId], references: [id])
+
+  @@index([orgId, subAgencyId])
+  @@map("commission_rules")
+}
+
+model CommissionLedger {
+  id          String           @id @default(uuid())
+  tripId      String           @unique @map("trip_id")
+  subAgencyId String           @map("sub_agency_id")
+  fareAmount  Float            @map("fare_amount")
+  commission  Float
+  status      CommissionStatus @default(PENDING)
+  approvedAt  DateTime?        @map("approved_at")
+  createdAt   DateTime         @default(now()) @map("created_at")
+  updatedAt   DateTime         @updatedAt @map("updated_at")
+
+  trip        Trip      @relation(fields: [tripId], references: [id])
+  subAgency   SubAgency @relation(fields: [subAgencyId], references: [id])
+
+  @@index([subAgencyId])
+  @@index([status])
+  @@map("commission_ledger")
+}
+
+// ─── SETTINGS & TEMPLATES ───────────────────────────────
+
+model WhatsAppTemplate {
+  id        String   @id @default(uuid())
+  orgId     String   @map("org_id")
+  name      String
+  body      String
+  variables String[] @default([])
+  isActive  Boolean  @default(true) @map("is_active")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  org       Organization @relation(fields: [orgId], references: [id])
+
+  @@unique([orgId, name])
+  @@map("whatsapp_templates")
+}
+
+model WhatsAppConversation {
+  id           String   @id @default(uuid())
+  orgId        String   @map("org_id")
+  phone        String
+  customerName String?  @map("customer_name")
+  step         Int      @default(0)
+  data         Json     @default("{}")
+  isComplete   Boolean  @default(false) @map("is_complete")
+  tripId       String?  @map("trip_id")
+  expiresAt    DateTime @map("expires_at")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  @@unique([orgId, phone])
+  @@index([isComplete])
+  @@map("whatsapp_conversations")
+}
+
+model OrgServiceType {
+  id          String      @id @default(uuid())
+  orgId       String      @map("org_id")
+  serviceType ServiceType @map("service_type")
+  label       String
+  isActive    Boolean     @default(true) @map("is_active")
+  createdAt   DateTime    @default(now()) @map("created_at")
+  updatedAt   DateTime    @updatedAt @map("updated_at")
+
+  org         Organization @relation(fields: [orgId], references: [id])
+
+  @@unique([orgId, serviceType])
+  @@map("org_service_types")
+}
