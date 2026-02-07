@@ -5,10 +5,6 @@ on:
     branches: [main]
   workflow_dispatch:
 
-env:
-  AWS_REGION: ap-south-1
-  LAMBDA_FUNCTION_NAME: tripbh-backend
-
 jobs:
   test:
     name: Lint & Test
@@ -35,10 +31,6 @@ jobs:
     needs: test
     runs-on: ubuntu-latest
 
-    permissions:
-      id-token: write
-      contents: read
-
     steps:
       - uses: actions/checkout@v4
 
@@ -61,27 +53,7 @@ jobs:
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: ${{ env.AWS_REGION }}
+          aws-region: ap-south-1
 
-      - name: Deploy to Lambda
-        run: |
-          aws lambda update-function-code \
-            --function-name ${{ env.LAMBDA_FUNCTION_NAME }} \
-            --zip-file fileb://lambda.zip \
-            --publish
-
-      - name: Wait for update
-        run: |
-          aws lambda wait function-updated-v2 \
-            --function-name ${{ env.LAMBDA_FUNCTION_NAME }}
-
-      - name: Smoke test
-        run: |
-          FUNCTION_URL=$(aws lambda get-function-url-config \
-            --function-name ${{ env.LAMBDA_FUNCTION_NAME }} \
-            --query 'FunctionUrl' --output text 2>/dev/null || echo "")
-          if [ -n "$FUNCTION_URL" ]; then
-            curl -sf "${FUNCTION_URL}api/health" || echo "Health check skipped (no function URL)"
-          else
-            echo "No function URL configured, skipping smoke test"
-          fi
+      - name: Deploy with Serverless
+        run: npx serverless deploy --stage prod
